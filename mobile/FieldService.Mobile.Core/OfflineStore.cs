@@ -30,6 +30,8 @@ public class OfflineStore
  public Task<List<DraftArchive>> Archives(string job)=>db.Table<DraftArchive>().Where(x=>x.JobId==job).ToListAsync();
  public async Task SaveDraft(Guid jobId,Inspection inspection,bool submit)
  {
+  // Snapshot mutable UI data before awaiting the synchronization lock.
+  inspection=Read<Inspection>(Write(inspection));
   await gate.WaitAsync();try
   {
    var id=jobId.ToString();var local=await db.FindAsync<LocalJob>(id)??throw new InvalidOperationException("Download this job first.");var server=Read<WorkOrderDto>(local.ServerJson);
@@ -68,10 +70,19 @@ public class OfflineStore
     var local=c.Find<LocalJob>(w.Id.ToString());
     if(local==null)c.Insert(new LocalJob{Id=w.Id.ToString(),ServerJson=Write(w),DraftJson=Write(w.Inspection)});
     else if(local.State=="Synced"){local.ServerJson=Write(w);local.DraftJson=Write(w.Inspection);local.Accessible=true;c.Update(local);}
-    else {var previous=Read<WorkOrderDto>(local.ServerJson);local.Accessible=true;if(w.Version!=previous.Version&&!c.Table<OutboxEntry>().Any(e=>e.JobId==local.Id&&e.Payload!="")){local.State="Conflict";local.Error="Server version changed. Compare and resolve before retrying.";c.Update(local);}}
+    else {var previous=Read<WorkOrderDto>(local.ServerJson);local.Accessible=true;if(w.Version!=previous.Version&&!c.Table<OutboxEntry>().Any(e=>e.JobId==local.Id&&e.Payload!="")){local.State="Conflict";local.Error="Server version changed. Compare and resolve before retrying.";}c.Update(local);}
    }
    foreach(var local in existing.Where(l=>bundle.WorkOrders.All(w=>w.Id.ToString()!=l.Id))){local.Accessible=false;local.State="Conflict";local.Error="Assignment is no longer accessible. Local work is retained; contact your supervisor.";c.Update(local);}
   });
+  // Server evidence must remain viewable after reassignment, restart, and disconnection.
+  foreach(var work in bundle.WorkOrders)
+   foreach(var id in work.Inspection.AttachmentIds)
+    if(await db.FindAsync<LocalPhoto>(id.ToString())==null)
+    {
+     using var photo=await client.GetAsync($"api/attachments/{id}");photo.EnsureSuccessStatusCode();
+     var bytes=await photo.Content.ReadAsByteArrayAsync();if(bytes.Length>5*1024*1024)throw new InvalidOperationException("Server photo exceeds the local size limit.");
+     await db.InsertAsync(new LocalPhoto{Id=id.ToString(),JobId=work.Id.ToString(),ContentType=photo.Content.Headers.ContentType?.MediaType??"image/jpeg",Data=bytes,Acknowledged=true});
+    }
  }
  public async Task Sync(bool manual=false)
  {
@@ -84,19 +95,18 @@ public class OfflineStore
     local.State="Syncing";local.Error="";await db.UpdateAsync(local);
     try
     {
-     // Upload dependencies first. An acknowledgment is persisted separately from the inspection receipt.
-     foreach(var photo in (await Photos(local.Id)).Where(p=>entries.Any(e=>Read<Inspection>(e.InspectionJson).AttachmentIds.Contains(Guid.Parse(p.Id)))))
-     {
-      if(photo.Acknowledged)continue;if(!manual&&photo.RetryAt>DateTimeOffset.UtcNow.ToUnixTimeSeconds())throw new RetryLaterException();
-      try { using var body=new ByteArrayContent(photo.Data);body.Headers.ContentType=new MediaTypeHeaderValue(photo.ContentType);var res=await client.PutAsync($"api/work-orders/{local.Id}/attachments/{photo.Id}",body);await CheckResponse(res,local);var ack=await res.Content.ReadFromJsonAsync<AttachmentAck>(JsonOptions);if(ack?.Id.ToString()!=photo.Id)throw new InvalidOperationException("Photo acknowledgment mismatch.");photo.Acknowledged=true;photo.Error="";await db.UpdateAsync(photo); }
-      catch(Exception ex){photo.Attempts++;photo.RetryAt=NextRetry(photo.Attempts);photo.Error=ex.Message;await db.UpdateAsync(photo);throw;}
-     }
      foreach(var entry in entries)
      {
       if(!manual&&entry.RetryAt>DateTimeOffset.UtcNow.ToUnixTimeSeconds())throw new RetryLaterException();
+     foreach(var photo in (await Photos(local.Id)).Where(p=>Read<Inspection>(entry.InspectionJson).AttachmentIds.Contains(Guid.Parse(p.Id))))
+     {
+      if(photo.Acknowledged)continue;if(!manual&&photo.RetryAt>DateTimeOffset.UtcNow.ToUnixTimeSeconds())throw new RetryLaterException();
+      try { using var body=new ByteArrayContent(photo.Data);body.Headers.ContentType=new MediaTypeHeaderValue(photo.ContentType);using var photoResponse=await client.PutAsync($"api/work-orders/{local.Id}/attachments/{photo.Id}",body);await CheckResponse(photoResponse,local);var photoAck=await photoResponse.Content.ReadFromJsonAsync<AttachmentAck>(JsonOptions);if(photoAck?.Id.ToString()!=photo.Id)throw new InvalidOperationException("Photo acknowledgment mismatch.");photo.Acknowledged=true;photo.Error="";await db.UpdateAsync(photo); }
+      catch(Exception ex){photo.Attempts++;photo.RetryAt=NextRetry(photo.Attempts);photo.Error=ex.Message;await db.UpdateAsync(photo);throw;}
+     }
       if(entry.Payload==""){var current=Read<WorkOrderDto>(local.ServerJson);entry.Payload=Write(new SyncMutation(Guid.Parse(entry.OperationId),Guid.Parse(entry.JobId),current.Version,entry.Action,Read<Inspection>(entry.InspectionJson)));}
       entry.Attempts++;entry.State="Syncing";await db.UpdateAsync(entry);
-      var res=await client.PostAsJsonAsync("api/sync/mutations",Read<SyncMutation>(entry.Payload),JsonOptions);await CheckResponse(res,local);
+      using var res=await client.PostAsJsonAsync("api/sync/mutations",Read<SyncMutation>(entry.Payload),JsonOptions);await CheckResponse(res,local);
       var ack=await res.Content.ReadFromJsonAsync<SyncAck>(JsonOptions)??throw new InvalidOperationException("Missing acknowledgment.");if(ack.OperationId.ToString()!=entry.OperationId||ack.WorkOrder.Id.ToString()!=local.Id)throw new InvalidOperationException("Operation acknowledgment mismatch.");
       local.ServerJson=Write(ack.WorkOrder);
       await db.RunInTransactionAsync(c=>{c.Delete(entry);if(!c.Table<OutboxEntry>().Any(e=>e.JobId==local.Id)){local.State="Synced";local.WantsSubmit=false;local.DraftJson=Write(ack.WorkOrder.Inspection);}c.Update(local);});
@@ -119,7 +129,9 @@ public class OfflineStore
  {
   if(res.IsSuccessStatusCode)return;var body=await res.Content.ReadAsStringAsync();
   if(res.StatusCode==HttpStatusCode.Unauthorized)throw new AuthenticationException("Session expired. Sign in online with the same account; local work is retained.");
-  if(res.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.Forbidden){local.State="Conflict";throw new InvalidOperationException("Server conflict or assignment change. Compare server and local work. "+body);}
+  // A definitive rejection requires explicit correction, not infinite replay of an invalid frozen request.
+  if(res.StatusCode==HttpStatusCode.BadRequest){local.State="Conflict";throw new InvalidOperationException("Inspection rejected. Compare and keep the local draft to edit it, then submit again. "+body);}
+  if(res.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.Forbidden or HttpStatusCode.NotFound){local.State="Conflict";throw new InvalidOperationException("Server conflict or assignment change. Compare server and local work. "+body);}
   throw new InvalidOperationException($"Server {(int)res.StatusCode}: {body}");
  }
  public async Task<WorkOrderDto> Current(Guid id){var res=await client.GetAsync($"api/work-orders/{id}");res.EnsureSuccessStatusCode();return (await res.Content.ReadFromJsonAsync<WorkOrderDto>(JsonOptions))!;}
@@ -131,18 +143,19 @@ public class OfflineStore
    // Fetch again; do not overwrite changes made after the comparison screen was opened.
    var server=await Current(id);if(server.Version!=reviewedServer.Version)throw new InvalidOperationException("Server changed again. Compare the latest version.");
    if(keepLocal&&(server.TechnicianId!=userId||server.Status is "Submitted" or "Completed"))throw new InvalidOperationException("Local work cannot be replayed into a closed or reassigned job. Use server version or contact supervisor.");
-   var draft=local.DraftJson;var submit=local.WantsSubmit;
+   var draft=local.DraftJson;
+   var editable=Read<Inspection>(draft);editable.SubmittedAt=null;var rebased=Write(editable);
    await db.RunInTransactionAsync(c=>
    {
     c.Insert(new DraftArchive{Id=Guid.NewGuid().ToString(),JobId=local.Id,Json=draft,Reason=keepLocal?"Explicit local rebase":"Explicit server adoption",At=DateTime.UtcNow});c.Execute("DELETE FROM OutboxEntry WHERE JobId = ?",local.Id);
-    local.ServerJson=Write(server);local.Accessible=true;local.Error="";local.State=keepLocal?"Pending":"Synced";local.WantsSubmit=keepLocal&&submit;
+    local.ServerJson=Write(server);local.Accessible=true;local.Error="";local.State=keepLocal?"Pending":"Synced";local.WantsSubmit=false;
     if(!keepLocal)local.DraftJson=Write(server.Inspection);
-    else c.Insert(new OutboxEntry{OperationId=Guid.NewGuid().ToString(),JobId=local.Id,Action=submit?"Submit":"Save",InspectionJson=draft});
+    else {local.DraftJson=rebased;c.Insert(new OutboxEntry{OperationId=Guid.NewGuid().ToString(),JobId=local.Id,Action="Save",InspectionJson=rebased});}
     c.Update(local);
    });
   }finally{gate.Release();}
  }
- public async Task Close()=>await db.CloseAsync();
+ public async Task Close(){await gate.WaitAsync();try{await db.CloseAsync();}finally{gate.Release();}}
 }
 public class RetryLaterException:Exception;
 public class AuthenticationException(string message):Exception(message);

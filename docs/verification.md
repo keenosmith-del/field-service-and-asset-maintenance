@@ -2,19 +2,23 @@
 
 ## Passed
 
-- ASP.NET Core API Release compilation in Docker using the .NET 10 SDK.
-- PostgreSQL migration, demo seed, container recreation, health check and persisted records.
-- Angular production build (217.53 kB raw initial bundle).
-- Angular browser checks: supervisor login, real metrics, site creation, completed inspection details, checklist answers, photograph loading, consumed parts and audit records.
-- Ten C# tests: password hashing; mandatory checklist validation; technician lifecycle restrictions; closed work protection; duplicate part validation; SQLite/outbox/photo recovery after restart; immutable operation replay after a lost acknowledgment; conflict retention and explicit resolution; atomic photo/outbox reference persistence.
-- Real API/PostgreSQL workflow: authentication, unauthenticated rejection, supervisor/technician RBAC, assignment ownership, attachment retries and invalid image rejection, null payload validation, concurrent duplicate submission, identical persisted receipt replay, changed-payload collision rejection, exactly-once stock consumption, stale-version conflicts, supervisor review, completed asset history, fault history, reports, repeated schedule generation, and reassignment retaining earlier photo evidence.
+- ASP.NET Core API Release compilation in Docker using .NET 10; PostgreSQL migration, demonstration seed, durable records and database health.
+- Final Angular production bundle using Node **24.14.1**: **220.47 kB** raw initial bundle. Node 24 is pinned at both repository/web scope; npm installation enforces the major version; CI uses Node 24.
+- **13 C# tests**, all passing: password hashing, required checklists, technician lifecycle restrictions, closed work protection, duplicate quantities, SQLite restart/outbox/photo recovery, immutable lost-acknowledgment replay, explicit conflict resolution, atomic photo references, rejection correction with archived evidence, incoming photograph cache, and restored assignment access without draft loss.
+- Real HTTP/API/PostgreSQL workflow: authentication, role and assignment authorization, site/asset create/update/delete and history protection, safe attachment upload/replay and invalid image rejection, null input validation, concurrent duplicate submission, exact receipt replay, changed-payload rejection, exactly-once stock, stale versions, supervisor review/history/faults/reports, schedule creation/edit/pause/enable/repeated generation, stale inventory/schedule protection, technician profile edit, retired-asset generation exclusion and reassignment retaining photograph evidence.
+- **Actual mobile SQLite engine against the live API/PostgreSQL**: scheduled assignment; offline start/checklist/notes/fault/photo/parts/submission; process restart; exact photo retention; disconnected request; deliberately lost response after a real server commit; identical frozen request replay after another restart; supervisor review before response recovery; local reconciliation to Completed; stock/fault/consumption exactly once; persisted photo bytes/history/reports/audit; corrective fault linkage; a fresh photo cache; stock rejection rollback and explicit draft correction.
+- Angular browser verification: real supervisor login and metrics; completed inspection/evidence/audit viewing; schedule edit and stale-version recovery; technician profile update; acknowledged inventory adjustment using the inline form; persisted reports. Verification data is retained in `CHECK-*`/`JOURNEY-*` records.
+- Final native Android MAUI Debug APK compiled and exported with **zero compiler warnings and zero errors**. Photo selection uses `PickPhotosAsync` with a single-item limit. Artifact: `artifacts/android/com.fieldservice.maintenance-Signed.apk`, SHA-256 `7bb7e57796791a4bc39d91fb6d5a5ebc89b5a02eeb8f1c40ec56f72374c6f381`.
+- Shell/Python verification script syntax and `git diff --check`.
 
-The workflow script creates `CHECK-*` records in the demonstration database and retains them for audit. The original seeded pump inspection remains available for a hands-on demonstration. Credentials and signing keys are in ignored `.env`, not in source control.
+## Native device acceptance
 
-## Native verification
+Emulator acceptance was deferred at the user's direction for this backend/frontend integration and UI-redesign checkpoint. The virtual device booted, but the complete native GUI journey was not executed. Camera/picker permissions, secure storage and native page lifecycle remain **unverified on a device**. The live SQLite/API acceptance test verifies persistence and synchronization independently of native widgets. A physical Android device can be used for later acceptance; an emulator is optional.
 
-The Linux ARM64 Android toolchain could not load native build dependencies (`Mono.Unix`, then `libZipSharpNative-3-3`). Installing Google's SDK components and switching the complete build environment to Linux x86_64 resolved the architecture mismatch. The native MAUI application source compiled using the genuine Android workload. The complete Android Debug APK build succeeded with zero errors. One warning reports that single-photo selection uses MAUI's still-supported, obsolete `PickPhotoAsync`; multi-photo selection is not enabled. The APK is exported to `artifacts/android` (ignored by Git).
+Temporary emulator tooling was removed to recover disk space; the final APK is retained. The final builds passed after sequencing resource-intensive checks. No unrelated project data or Docker volumes were deleted. API/database records are persisted and Compose services have restart policies.
 
-No Android emulator, Android SDK, host .NET SDK, or Xcode was present on this Mac. Android camera/picker permissions, secure storage, native page lifecycle, connectivity notifications, and the complete device offline/restart/sync journey have **not** been executed. iOS and Mac Catalyst targets have **not** been compiled or run.
+## Optional/external verification
 
-GitHub Actions is configured for Angular, C# checks, PostgreSQL workflow checks and Android compilation. The workflow has not been run on GitHub in this execution.
+- iOS and Mac Catalyst are optional targets and have not been compiled or run; Xcode is unavailable here.
+- GitHub Actions is configured for Angular, C# tests, PostgreSQL checks, the live mobile-core journey and Android compilation. It has not been executed on GitHub in this work. Local equivalent checks are recorded above.
+- Trusted production HTTPS, production credentials and deployment are environment configuration outside this local UI-redesign checkpoint.

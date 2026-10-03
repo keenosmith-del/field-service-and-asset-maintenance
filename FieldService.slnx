@@ -2,5 +2,5 @@
   <Folder Name="/API/"><Project Path="api/FieldService.Api/FieldService.Api.csproj" /></Folder>
   <Folder Name="/Shared/"><Project Path="shared/FieldService.Contracts/FieldService.Contracts.csproj" /></Folder>
   <Folder Name="/Mobile/"><Project Path="mobile/FieldService.Mobile.Core/FieldService.Mobile.Core.csproj" /><Project Path="mobile/FieldService.Mobile/FieldService.Mobile.csproj" /></Folder>
-  <Folder Name="/Tests/"><Project Path="tests/FieldService.Tests/FieldService.Tests.csproj" /></Folder>
+  <Folder Name="/Tests/"><Project Path="tests/FieldService.Journey/FieldService.Journey.csproj" /><Project Path="tests/FieldService.Tests/FieldService.Tests.csproj" /></Folder>
 </Solution>

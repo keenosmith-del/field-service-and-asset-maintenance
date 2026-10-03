@@ -39,7 +39,7 @@ app.MapPost("/api/auth/login",async(LoginRequest r,AppDb db)=>
 var api=app.MapGroup("/api").RequireAuthorization();
 api.AddEndpointFilter<InputValidationFilter>();
 api.MapGet("/me",(ClaimsPrincipal u)=>new{id=u.UserId(),name=u.Identity!.Name,role=u.Supervisor()?"Supervisor":"Technician"});
-api.MapGet("/parts",async(AppDb db)=>await db.Parts.OrderBy(x=>x.Name).Select(x=>new PartDto(x.Id,x.Name,x.Sku,x.Stock)).ToListAsync());
+api.MapGet("/parts",async(AppDb db)=>await db.Parts.OrderBy(x=>x.Name).Select(x=>new PartDto(x.Id,x.Name,x.Sku,x.Stock){Version=x.Version}).ToListAsync());
 api.MapGet("/work-orders",async(AppDb db,JobService svc,ClaimsPrincipal u)=>
 {
  var query=db.WorkOrders.AsQueryable();if(!u.Supervisor())query=query.Where(x=>x.TechnicianId==u.UserId());var result=new List<WorkOrderDto>();foreach(var w in await query.OrderBy(x=>x.DueAt).ToListAsync())result.Add(await svc.Dto(w));return Results.Ok(result);
@@ -47,12 +47,13 @@ api.MapGet("/work-orders",async(AppDb db,JobService svc,ClaimsPrincipal u)=>
 api.MapGet("/work-orders/{id:guid}",async(Guid id,AppDb db,JobService svc,ClaimsPrincipal u)=> { var w=await db.WorkOrders.FindAsync(id);return w==null?Results.NotFound():!u.Supervisor()&&w.TechnicianId!=u.UserId()?Results.Forbid():Results.Ok(await svc.Dto(w)); });
 api.MapGet("/sync/download",async(AppDb db,JobService svc,ClaimsPrincipal u)=>
 {
- var result=new List<WorkOrderDto>();foreach(var w in await db.WorkOrders.Where(x=>x.TechnicianId==u.UserId()).OrderBy(x=>x.DueAt).ToListAsync())result.Add(await svc.Dto(w));return new DownloadBundle(result,await db.Parts.Select(x=>new PartDto(x.Id,x.Name,x.Sku,x.Stock)).ToListAsync(),DateTimeOffset.UtcNow);
+ var result=new List<WorkOrderDto>();foreach(var w in await db.WorkOrders.Where(x=>x.TechnicianId==u.UserId()).OrderBy(x=>x.DueAt).ToListAsync())result.Add(await svc.Dto(w));return new DownloadBundle(result,await db.Parts.Select(x=>new PartDto(x.Id,x.Name,x.Sku,x.Stock){Version=x.Version}).ToListAsync(),DateTimeOffset.UtcNow);
 }).RequireAuthorization(p=>p.RequireRole("Technician"));
 api.MapPost("/sync/mutations",async(SyncMutation r,JobService svc,ClaimsPrincipal u)=>{var result=await svc.Mutate(u.UserId(),r);return Results.Json(result.Body,statusCode:result.Status);}).RequireAuthorization(p=>p.RequireRole("Technician"));
 api.MapPut("/work-orders/{jobId:guid}/attachments/{id:guid}",async(Guid jobId,Guid id,HttpRequest request,AppDb db,ClaimsPrincipal u)=>
 {
- var job=await db.WorkOrders.FindAsync(jobId);if(job==null)return Results.NotFound();if(job.TechnicianId!=u.UserId())return Results.Forbid();
+ await using var tx=await db.Database.BeginTransactionAsync();
+ var job=await db.WorkOrders.FromSqlInterpolated($"SELECT * FROM \"WorkOrders\" WHERE \"Id\" = {jobId} FOR UPDATE").SingleOrDefaultAsync();if(job==null)return Results.NotFound();if(job.TechnicianId!=u.UserId())return Results.Forbid();
  Rules.Require(id!=Guid.Empty,"Attachment ID required.");
  using var stream=new MemoryStream();var buffer=new byte[81920];int read;while((read=await request.Body.ReadAsync(buffer))>0){Rules.Require(stream.Length+read<=5*1024*1024,"Photo must be at most 5 MB.");await stream.WriteAsync(buffer.AsMemory(0,read));}
  var data=stream.ToArray();var type=request.ContentType?.Split(';')[0];
@@ -60,7 +61,7 @@ api.MapPut("/work-orders/{jobId:guid}/attachments/{id:guid}",async(Guid jobId,Gu
  Rules.Require((type=="image/jpeg"&&jpeg)||(type=="image/png"&&png),"Only JPEG and PNG photos are accepted.");var hash=Convert.ToHexString(SHA256.HashData(data));
  var old=await db.Attachments.FindAsync(id);if(old!=null){Rules.Require(old.UserId==u.UserId()&&old.WorkOrderId==jobId&&old.Hash==hash,"Attachment ID collision.");return Results.Ok(new AttachmentAck(id,old.ContentType,old.Data.LongLength));}
  Rules.Require(job.Status is "Assigned" or "In Progress","Work order no longer accepts photos.");Rules.Require(await db.Attachments.CountAsync(x=>x.WorkOrderId==jobId)<20,"Photo limit reached.");
- db.Attachments.Add(new(){Id=id,WorkOrderId=jobId,UserId=u.UserId(),ContentType=type!,Hash=hash,Data=data});db.Log(u.UserId(),jobId,"Photo uploaded",id.ToString());await db.SaveChangesAsync();return Results.Ok(new AttachmentAck(id,type!,data.LongLength));
+ db.Attachments.Add(new(){Id=id,WorkOrderId=jobId,UserId=u.UserId(),ContentType=type!,Hash=hash,Data=data});db.Log(u.UserId(),jobId,"Photo uploaded",id.ToString());await db.SaveChangesAsync();await tx.CommitAsync();return Results.Ok(new AttachmentAck(id,type!,data.LongLength));
 }).RequireAuthorization(p=>p.RequireRole("Technician"));
 api.MapGet("/attachments/{id:guid}",async(Guid id,AppDb db,ClaimsPrincipal u,HttpResponse response)=>
 {
@@ -77,13 +78,32 @@ admin.MapPut("/assets/{id:guid}",async(Guid id,AssetInput r,AppDb db,ClaimsPrinc
 admin.MapDelete("/assets/{id:guid}",async(Guid id,AppDb db,ClaimsPrincipal u)=>{var a=await db.Assets.FindAsync(id);if(a==null)return Results.NotFound();Rules.Require(!await db.WorkOrders.AnyAsync(x=>x.AssetId==id)&&!await db.Schedules.AnyAsync(x=>x.AssetId==id),"Asset has maintenance records. Set it to Retired to retain history.");db.Assets.Remove(a);db.Log(u.UserId(),id,"Asset deleted");await db.SaveChangesAsync();return Results.NoContent();});
 admin.MapGet("/technicians",async(AppDb db)=>await db.Users.Where(x=>x.Role=="Technician").Select(x=>new TechnicianDto(x.Id,x.Name,x.Email)).ToListAsync());
 admin.MapPost("/technicians",async(TechnicianInput r,AppDb db,ClaimsPrincipal u)=>{Rules.Text(r.Name,"Name",200);Rules.Require(System.Net.Mail.MailAddress.TryCreate(r.Email,out _)&&r.Email.Length<=254,"Valid email required.");Rules.Require(r.Password.Length>=12&&r.Password.Length<=200,"Password must contain 12–200 characters.");var t=new User{Id=Guid.NewGuid(),Name=r.Name,Email=r.Email.Trim().ToLower(),Role="Technician"};t.PasswordHash=Auth.Hash(t,r.Password);db.Users.Add(t);db.Log(u.UserId(),t.Id,"Technician created");await db.SaveChangesAsync();return Results.Ok(new TechnicianDto(t.Id,t.Name,t.Email));});
+admin.MapPut("/technicians/{id:guid}",async(Guid id,TechnicianProfileInput r,AppDb db,ClaimsPrincipal u)=>
+{
+ var t=await db.Users.SingleOrDefaultAsync(x=>x.Id==id&&x.Role=="Technician");if(t==null)return Results.NotFound();
+ Rules.Text(r.Name,"Name",200);Rules.Require(System.Net.Mail.MailAddress.TryCreate(r.Email,out _)&&r.Email.Length<=254,"Valid email required.");
+ t.Name=r.Name;t.Email=r.Email.Trim().ToLower();db.Log(u.UserId(),id,"Technician profile updated");await db.SaveChangesAsync();return Results.Ok(new TechnicianDto(t.Id,t.Name,t.Email));
+});
+admin.MapPut("/parts/{id:guid}/stock",async(Guid id,StockInput r,AppDb db,ClaimsPrincipal u)=>
+{
+ var p=await db.Parts.FindAsync(id);if(p==null)return Results.NotFound();if(p.Version!=r.Version)return Results.Conflict(new{message="Stock changed. Refresh before adjusting inventory."});
+ Rules.Require(r.Stock>=0&&r.Stock<=100000000&&decimal.Round(r.Stock,3)==r.Stock,"Stock must be non-negative with at most three decimal places.");
+ var previous=p.Stock;p.Stock=r.Stock;p.Version++;db.Log(u.UserId(),id,"Stock adjusted",$"{previous} -> {p.Stock}");await db.SaveChangesAsync();return Results.Ok(new PartDto(p.Id,p.Name,p.Sku,p.Stock){Version=p.Version});
+});
 admin.MapGet("/schedules",async(AppDb db)=>await db.Schedules.OrderBy(x=>x.NextDueAt).ToListAsync());
 admin.MapPost("/schedules",async(ScheduleInput r,AppDb db,ClaimsPrincipal u)=>{await ValidateJob(r.AssetId,r.TechnicianId,r.Name,r.Priority,r.Checklist,db);Rules.Require(r.IntervalDays is >0 and <=3650,"Interval must be 1–3650 days.");var s=new MaintenanceSchedule{Id=Guid.NewGuid(),AssetId=r.AssetId,Name=r.Name,IntervalDays=r.IntervalDays,NextDueAt=r.NextDueAt.ToUniversalTime(),Priority=r.Priority,TechnicianId=r.TechnicianId,ChecklistJson=Json.Write(r.Checklist)};db.Schedules.Add(s);db.Log(u.UserId(),s.Id,"Schedule created");await db.SaveChangesAsync();return Results.Ok(s);});
-admin.MapPost("/schedules/{id:guid}/toggle",async(Guid id,AppDb db,ClaimsPrincipal u)=>{var s=await db.Schedules.FindAsync(id);if(s==null)return Results.NotFound();s.Active=!s.Active;s.Version++;db.Log(u.UserId(),id,s.Active?"Schedule enabled":"Schedule paused");await db.SaveChangesAsync();return Results.Ok(s);});
+admin.MapPut("/schedules/{id:guid}",async(Guid id,ScheduleEditInput input,AppDb db,ClaimsPrincipal u)=>
+{
+ var s=await db.Schedules.FindAsync(id);if(s==null)return Results.NotFound();if(s.Version!=input.Version)return Results.Conflict(new{message="Schedule changed. Refresh before editing."});
+ var r=input.Schedule;await ValidateJob(r.AssetId,r.TechnicianId,r.Name,r.Priority,r.Checklist,db);Rules.Require(r.IntervalDays is >0 and <=3650,"Interval must be 1–3650 days.");
+ s.AssetId=r.AssetId;s.Name=r.Name;s.IntervalDays=r.IntervalDays;s.NextDueAt=r.NextDueAt.ToUniversalTime();s.Priority=r.Priority;s.TechnicianId=r.TechnicianId;s.ChecklistJson=Json.Write(r.Checklist);s.Version++;
+ db.Log(u.UserId(),id,"Schedule updated","Existing work orders retained; changes apply to future generation.");await db.SaveChangesAsync();return Results.Ok(s);
+});
+admin.MapPost("/schedules/{id:guid}/toggle",async(Guid id,VersionInput r,AppDb db,ClaimsPrincipal u)=>{var s=await db.Schedules.FindAsync(id);if(s==null)return Results.NotFound();if(s.Version!=r.Version)return Results.Conflict(new{message="Schedule changed. Refresh before toggling."});s.Active=!s.Active;s.Version++;db.Log(u.UserId(),id,s.Active?"Schedule enabled":"Schedule paused");await db.SaveChangesAsync();return Results.Ok(s);});
 admin.MapPost("/schedules/generate",async(AppDb db,ClaimsPrincipal u)=>
 {
  await using var tx=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);var count=0;var horizon=DateTimeOffset.UtcNow.AddDays(30);
- foreach(var s in await db.Schedules.Where(x=>x.Active&&x.NextDueAt<=horizon).OrderBy(x=>x.Id).ToListAsync())
+ foreach(var s in await db.Schedules.Where(x=>x.Active&&x.NextDueAt<=horizon&&db.Assets.Any(a=>a.Id==x.AssetId&&a.Status!="Retired")).OrderBy(x=>x.Id).ToListAsync())
  { var iterations=0;while(s.NextDueAt<=horizon&&iterations++<100){if(!await db.WorkOrders.AnyAsync(x=>x.ScheduleId==s.Id&&x.DueAt==s.NextDueAt)){var w=new WorkOrder{Id=Guid.NewGuid(),AssetId=s.AssetId,ScheduleId=s.Id,Title=s.Name,DueAt=s.NextDueAt,Priority=s.Priority,TechnicianId=s.TechnicianId,Status=s.TechnicianId==null?"Scheduled":"Assigned",ChecklistJson=s.ChecklistJson};db.WorkOrders.Add(w);db.Log(u.UserId(),w.Id,"Preventive work generated");count++;}s.NextDueAt=s.NextDueAt.AddDays(s.IntervalDays);}s.Version++; }
  await db.SaveChangesAsync();await tx.CommitAsync();return Results.Ok(new{generated=count});
 });

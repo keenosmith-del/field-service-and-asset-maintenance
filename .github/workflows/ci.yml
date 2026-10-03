@@ -32,6 +32,7 @@ jobs:
             sleep 2
           done
           python3 scripts/check-workflow.py
+          ./scripts/check-mobile-journey.sh
       - if: failure()
         run: docker compose logs --tail 100
       - if: always()

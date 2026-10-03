@@ -5,6 +5,10 @@ public record SiteInput(string Name, string Address);
 public record AssetInput(Guid SiteId, string Identifier, string Name, string Category, string Location, string Status, int ServiceIntervalDays);
 public record ChecklistDefinition(Guid Id, string Label, bool Required = true);
 public record ScheduleInput(Guid AssetId, string Name, int IntervalDays, DateTimeOffset NextDueAt, string Priority, Guid? TechnicianId, List<ChecklistDefinition> Checklist);
+public record ScheduleEditInput(ScheduleInput Schedule, long Version);
+public record TechnicianProfileInput(string Name, string Email);
+public record StockInput(decimal Stock, long Version);
+public record VersionInput(long Version);
 public record WorkOrderInput(Guid AssetId, string Title, DateTimeOffset DueAt, string Priority, Guid? TechnicianId, List<ChecklistDefinition> Checklist, Guid? FollowUpFaultId = null);
 public record AssignmentInput(Guid? TechnicianId, long Version);
 public record ReviewInput(long Version, string Notes);
@@ -26,10 +30,11 @@ public record SyncAck(Guid OperationId, WorkOrderDto WorkOrder);
 public record ConflictResponse(string Message, WorkOrderDto Current);
 public record WorkOrderDto(Guid Id, Guid AssetId, string AssetName, string AssetIdentifier, string SiteName, string Title, DateTimeOffset DueAt, string Priority, Guid? TechnicianId, string? TechnicianName, string Status, long Version, List<ChecklistDefinition> Checklist, Inspection Inspection, string ReviewNotes, DateTimeOffset? CompletedAt)
 {
+ public Guid? FollowUpFaultId { get; init; }
  public string AssetLocation { get; init; } = "";
  public string SiteAddress { get; init; } = "";
 }
-public record PartDto(Guid Id, string Name, string Sku, decimal Stock);
+public record PartDto(Guid Id, string Name, string Sku, decimal Stock) { public long Version { get; init; } }
 public record TechnicianDto(Guid Id, string Name, string Email);
 public record DownloadBundle(List<WorkOrderDto> WorkOrders, List<PartDto> Parts, DateTimeOffset ServerTime);
 public record AttachmentAck(Guid Id, string ContentType, long Size);

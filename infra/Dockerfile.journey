@@ -1,0 +1,15 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY Directory.Build.props global.json ./
+COPY shared/FieldService.Contracts/FieldService.Contracts.csproj shared/FieldService.Contracts/
+COPY mobile/FieldService.Mobile.Core/FieldService.Mobile.Core.csproj mobile/FieldService.Mobile.Core/
+COPY tests/FieldService.Journey/FieldService.Journey.csproj tests/FieldService.Journey/
+RUN dotnet restore tests/FieldService.Journey
+COPY shared shared
+COPY mobile/FieldService.Mobile.Core mobile/FieldService.Mobile.Core
+COPY tests/FieldService.Journey tests/FieldService.Journey
+RUN dotnet publish tests/FieldService.Journey -c Release --no-restore -o /app
+FROM mcr.microsoft.com/dotnet/runtime:10.0
+WORKDIR /app
+COPY --from=build /app ./
+ENTRYPOINT ["dotnet", "FieldService.Journey.dll"]

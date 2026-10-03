@@ -9,7 +9,7 @@ public class JobService(AppDb db)
  public async Task<WorkOrderDto> Dto(WorkOrder w)
  {
   var a=await db.Assets.SingleAsync(x=>x.Id==w.AssetId);var s=await db.Sites.SingleAsync(x=>x.Id==a.SiteId);var t=w.TechnicianId==null?null:await db.Users.SingleAsync(x=>x.Id==w.TechnicianId);
-  return new(w.Id,a.Id,a.Name,a.Identifier,s.Name,w.Title,w.DueAt,w.Priority,w.TechnicianId,t?.Name,w.Status,w.Version,Json.Read<List<ChecklistDefinition>>(w.ChecklistJson),Json.Read<Inspection>(w.InspectionJson),w.ReviewNotes,w.CompletedAt){AssetLocation=a.Location,SiteAddress=s.Address};
+  return new(w.Id,a.Id,a.Name,a.Identifier,s.Name,w.Title,w.DueAt,w.Priority,w.TechnicianId,t?.Name,w.Status,w.Version,Json.Read<List<ChecklistDefinition>>(w.ChecklistJson),Json.Read<Inspection>(w.InspectionJson),w.ReviewNotes,w.CompletedAt){AssetLocation=a.Location,SiteAddress=s.Address,FollowUpFaultId=w.FollowUpFaultId};
  }
  public async Task<(int Status,object Body)> Mutate(Guid userId,SyncMutation request)
  {

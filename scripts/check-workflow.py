@@ -77,4 +77,26 @@ progress=call('/api/sync/mutations','POST',{'operationId':str(uuid.uuid4()),'wor
 reassigned=call(f'/api/work-orders/{handoff["id"]}/assignment','PUT',{'technicianId':other['id'],'version':progress['workOrder']['version']},a)
 continued=call('/api/sync/mutations','POST',{'operationId':str(uuid.uuid4()),'workOrderId':handoff['id'],'baseVersion':reassigned['version'],'action':'Save','inspection':draft},other_session['token'])
 assert continued['workOrder']['inspection']['attachmentIds']==[handoff_photo]
-print('PASS: authentication, RBAC, ownership, photo replay, required checklist, durable mutation replay, exactly-once parts, version conflicts, review, history, reports and schedule generation')
+# Management edits are persisted and stale edits rejected; retired assets cannot generate future work.
+profile=call(f'/api/technicians/{other["id"]}','PUT',{'name':prefix+' Updated','email':other['email']},a);assert profile['name'].endswith('Updated')
+stock=next(p for p in call('/api/parts',token=a) if p['id']==part['id'])
+call(f'/api/parts/{part["id"]}/stock','PUT',{'stock':stock['stock']+1,'version':stock['version']},t,expected=403)
+replenished=call(f'/api/parts/{part["id"]}/stock','PUT',{'stock':stock['stock']+1,'version':stock['version']},a);assert replenished['stock']==before
+call(f'/api/parts/{part["id"]}/stock','PUT',{'stock':stock['stock'],'version':stock['version']},a,expected=409)
+current=next(s for s in call('/api/schedules',token=a) if s['id']==schedule['id'])
+updated={'assetId':asset['id'],'name':prefix+' Updated schedule','intervalDays':60,'nextDueAt':now(),'priority':'High','technicianId':tech['userId'],'checklist':checklist}
+edited=call(f'/api/schedules/{schedule["id"]}','PUT',{'schedule':updated,'version':current['version']},a);assert edited['intervalDays']==60
+call(f'/api/schedules/{schedule["id"]}','PUT',{'schedule':updated,'version':current['version']},a,expected=409)
+paused=call(f'/api/schedules/{schedule["id"]}/toggle','POST',{'version':edited['version']},a);assert not paused['active']
+enabled=call(f'/api/schedules/{schedule["id"]}/toggle','POST',{'version':paused['version']},a);assert enabled['active']
+call(f'/api/assets/{asset["id"]}','PUT',{'siteId':site['id'],'name':asset['name'],'identifier':asset['identifier'],'category':'Pump','location':'Plant room','status':'Retired','serviceIntervalDays':30},a)
+count=len(call('/api/work-orders',token=a));call('/api/schedules/generate','POST',{},a);assert len(call('/api/work-orders',token=a))==count,'Retired asset generated work'
+# Site and asset update/delete integrations, including history protection.
+call(f'/api/assets/{asset["id"]}','DELETE',token=a,expected=400)
+spare_site=call('/api/sites','POST',{'name':prefix+' Temporary','address':'Temporary'},a)
+spare_asset=call('/api/assets','POST',{'siteId':spare_site['id'],'identifier':prefix+'-TEMP','name':'Temporary','category':'Test','location':'Store','status':'Active','serviceIntervalDays':30},a)
+call(f'/api/sites/{spare_site["id"]}','DELETE',token=a,expected=400)
+call(f'/api/sites/{spare_site["id"]}','PUT',{'name':prefix+' Edited','address':'Updated address'},a)
+call(f'/api/assets/{spare_asset["id"]}','DELETE',token=a,expected=204)
+call(f'/api/sites/{spare_site["id"]}','DELETE',token=a,expected=204)
+print('PASS: management edits, stale inventory/schedule protection, retired assets, CRUD, authentication, RBAC, ownership, photo replay, required checklist, durable mutation replay, exactly-once parts, version conflicts, review, history, reports and schedule generation')

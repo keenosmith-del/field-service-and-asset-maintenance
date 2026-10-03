@@ -23,7 +23,7 @@ public partial class TechnicianViewModel:ObservableObject
  HttpClient? client;bool restored;readonly SemaphoreSlim commands=new(1,1);
  public TechnicianViewModel(){Connectivity.ConnectivityChanged+=OnConnectivity;ConnectionStatus=Connectivity.NetworkAccess==NetworkAccess.Internet?"Online":"Offline · local work available";_ = RetryLoop();}
  async Task RetryLoop(){using var timer=new PeriodicTimer(TimeSpan.FromSeconds(30));while(await timer.WaitForNextTickAsync()){if(IsSignedIn&&Connectivity.NetworkAccess==NetworkAccess.Internet)await Run(()=>Store!.Sync(),"Synchronization checked");}}
- async void OnConnectivity(object? sender,ConnectivityChangedEventArgs e){ConnectionStatus=e.NetworkAccess==NetworkAccess.Internet?"Online":"Offline · local work available";if(e.NetworkAccess==NetworkAccess.Internet&&IsSignedIn)await Run(()=>Store!.Sync(),"Connectivity restored; synchronization checked");}
+ async void OnConnectivity(object? sender,ConnectivityChangedEventArgs e){await MainThread.InvokeOnMainThreadAsync(()=>ConnectionStatus=e.NetworkAccess==NetworkAccess.Internet?"Online":"Offline · local work available");if(e.NetworkAccess==NetworkAccess.Internet&&IsSignedIn)await Run(()=>Store!.Sync(),"Connectivity restored; synchronization checked");}
  public async Task Restore(){if(restored){await Refresh();return;}restored=true;try{var json=await SecureStorage.Default.GetAsync("session");var url=await SecureStorage.Default.GetAsync("api-url");if(json!=null&&url!=null){ApiUrl=url;await Connect(OfflineStore.Read<Session>(json));await Refresh();Message="Cached assignments restored. Sign in online again if the session has expired.";}}catch(Exception ex){Message=ex.Message;}}
  async Task Connect(Session session)
  {
@@ -37,8 +37,9 @@ public partial class TechnicianViewModel:ObservableObject
  [RelayCommand] async Task Open(JobRow row){if(Store==null)return;await Application.Current!.Windows[0].Page!.Navigation.PushAsync(new JobPage(new JobViewModel(Store,row.Id)));}
  async Task Run(Func<Task> action,string success)
  {
-  if(!await commands.WaitAsync(0))return;IsBusy=true;Message="Working… Local edits remain in SQLite until acknowledged.";try{await action();Message=success;}catch(Exception ex){Message=ex.Message;}finally{if(Store!=null)await Refresh();IsBusy=false;commands.Release();}
+  if(!MainThread.IsMainThread){await MainThread.InvokeOnMainThreadAsync(()=>Run(action,success));return;}
+  if(!await commands.WaitAsync(0))return;IsBusy=true;Message="Working… Local edits remain in SQLite until acknowledged.";try{await action();Message=success;}catch(Exception ex){Message=ex.Message;}finally{try{if(Store!=null)await Refresh();}catch(Exception ex){Message=ex.Message;}finally{IsBusy=false;commands.Release();}}
  }
- public async Task Refresh(){if(Store==null)return;var jobs=await Store.Jobs();await MainThread.InvokeOnMainThreadAsync(()=>{Jobs.Clear();foreach(var local in jobs.OrderBy(x=>OfflineStore.Read<WorkOrderDto>(x.ServerJson).DueAt)){var j=OfflineStore.Read<WorkOrderDto>(local.ServerJson);Jobs.Add(new(j.Id,j.Title,$"{j.AssetIdentifier} · {j.SiteName} · due {j.DueAt.LocalDateTime:g}",$"{j.Status} · {local.State}"));}});}
+ public async Task Refresh(){if(Store==null)return;var jobs=await Store.Jobs();await MainThread.InvokeOnMainThreadAsync(()=>{Jobs.Clear();foreach(var local in jobs.OrderBy(x=>OfflineStore.Read<WorkOrderDto>(x.ServerJson).DueAt)){var j=OfflineStore.Read<WorkOrderDto>(local.ServerJson);Jobs.Add(new(j.Id,j.Title,$"{j.AssetIdentifier} · {j.SiteName} · due {j.DueAt.LocalDateTime:g}",$"{(local.WantsSubmit?"Submitted locally":OfflineStore.Read<Inspection>(local.DraftJson).StartedAt!=null&&j.Status=="Assigned"?"In Progress locally":j.Status)} · {local.State}"));}});}
 }
 public record JobRow(Guid Id,string Title,string Summary,string State);
