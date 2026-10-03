@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" x:Class="FieldService.Mobile.JobPage" Title="Inspection" BackgroundColor="#F3F6F7">
+<ScrollView><VerticalStackLayout Padding="20" Spacing="12">
+<Label Text="{Binding Title}" FontSize="24" FontAttributes="Bold"/><Label Text="{Binding Details}"/><Label Text="{Binding State}" TextColor="#16625D"/><Label Text="{Binding Error}" TextColor="#A34116"/>
+<Label Text="All edits are saved to SQLite. Submission remains pending until the server acknowledges it."/>
+<Button Text="Start job" IsEnabled="{Binding IsEditable}" Command="{Binding StartCommand}"/>
+<Label Text="Inspection checklist" FontSize="18"/>
+<VerticalStackLayout IsEnabled="{Binding IsEditable}" BindableLayout.ItemsSource="{Binding Answers}"><BindableLayout.ItemTemplate><DataTemplate><VerticalStackLayout><HorizontalStackLayout><CheckBox IsChecked="{Binding Done}"/><Label Text="{Binding Label}" VerticalOptions="Center"/></HorizontalStackLayout><Entry IsEnabled="{Binding IsEditable}" Text="{Binding Notes}" Placeholder="Checklist notes"/></VerticalStackLayout></DataTemplate></BindableLayout.ItemTemplate></VerticalStackLayout>
+<Editor IsEnabled="{Binding IsEditable}" Text="{Binding Notes}" Placeholder="Inspection notes" HeightRequest="100"/>
+<Label Text="Faults" FontSize="18"/>
+<VerticalStackLayout BindableLayout.ItemsSource="{Binding Faults}"><BindableLayout.ItemTemplate><DataTemplate><Label Text="{Binding Description}"/></DataTemplate></BindableLayout.ItemTemplate></VerticalStackLayout>
+<Entry Text="{Binding FaultDescription}" Placeholder="Fault description"/><Picker Title="Severity" ItemsSource="{Binding Severities}" SelectedItem="{Binding FaultSeverity}"/><Button Text="Add fault" IsEnabled="{Binding IsEditable}" Command="{Binding AddFaultCommand}"/>
+<Label Text="Replacement parts" FontSize="18"/>
+<VerticalStackLayout BindableLayout.ItemsSource="{Binding UsedParts}"><BindableLayout.ItemTemplate><DataTemplate><Label Text="{Binding Display}"/></DataTemplate></BindableLayout.ItemTemplate></VerticalStackLayout>
+<Picker Title="Part" ItemsSource="{Binding AvailableParts}" ItemDisplayBinding="{Binding Name}" SelectedItem="{Binding SelectedPart}"/><Entry Text="{Binding Quantity}" Placeholder="Quantity" Keyboard="Numeric"/><Button Text="Add quantity" IsEnabled="{Binding IsEditable}" Command="{Binding AddPartCommand}"/>
+<Label Text="Photographs" FontSize="18"/><Label Text="{Binding PhotoCount}"/>
+<HorizontalStackLayout Spacing="8"><Button Text="Camera" IsEnabled="{Binding IsEditable}" Command="{Binding CaptureCommand}"/><Button Text="Select photo" IsEnabled="{Binding IsEditable}" Command="{Binding PickCommand}"/></HorizontalStackLayout>
+<VerticalStackLayout BindableLayout.ItemsSource="{Binding PhotoPreviews}"><BindableLayout.ItemTemplate><DataTemplate><Image Source="{Binding .}" HeightRequest="160" Aspect="AspectFit"/></DataTemplate></BindableLayout.ItemTemplate></VerticalStackLayout>
+<Button Text="Save progress locally" IsEnabled="{Binding IsEditable}" Command="{Binding SaveCommand}"/><Button Text="Submit completed inspection" IsEnabled="{Binding IsEditable}" Command="{Binding SubmitCommand}"/>
+<Button Text="Compare local and server" Command="{Binding CompareCommand}"/>
+<Label Text="{Binding Comparison}"/><Button Text="Choose conflict resolution" IsVisible="{Binding HasComparison}" Command="{Binding ResolveCommand}"/><Button Text="Export retained local work" Command="{Binding ExportCommand}"/>
+</VerticalStackLayout></ScrollView></ContentPage>

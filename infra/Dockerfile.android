@@ -1,0 +1,20 @@
+# Linux Android build tasks contain x86_64 native libraries. Use the matching SDK
+# architecture even on Apple Silicon (Docker Desktop CPU emulation is required).
+FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:10.0 AS build
+RUN apt-get update && apt-get install -y openjdk-21-jdk-headless unzip && rm -rf /var/lib/apt/lists/*
+RUN dotnet workload install maui-android
+ENV USER=root JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+RUN curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip -o /tmp/android-tools.zip \
+ && printf '4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583  /tmp/android-tools.zip\n' | sha256sum -c - \
+ && unzip -q /tmp/android-tools.zip -d /tmp/android-tools \
+ && mkdir -p /opt/android-sdk/cmdline-tools \
+ && mv /tmp/android-tools/cmdline-tools /opt/android-sdk/cmdline-tools/latest
+RUN yes | /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=/opt/android-sdk "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+WORKDIR /src
+COPY Directory.Build.props global.json ./
+COPY shared shared
+COPY mobile mobile
+RUN dotnet build mobile/FieldService.Mobile -f net10.0-android -p:AndroidSdkDirectory=/opt/android-sdk -p:JavaSdkDirectory=/usr/lib/jvm/java-21-openjdk-amd64
+
+FROM scratch AS package
+COPY --from=build /src/mobile/FieldService.Mobile/bin/Debug/net10.0-android/*-Signed.apk /

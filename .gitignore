@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.angular/
+**/bin/
+**/obj/
+.env
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+TestResults/
+
+**/__pycache__/
+*.pyc
+artifacts/

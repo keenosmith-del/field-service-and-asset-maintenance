@@ -1,0 +1,13 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+WORKDIR /src
+COPY Directory.Build.props global.json ./
+COPY api/FieldService.Api/FieldService.Api.csproj api/FieldService.Api/
+COPY shared/FieldService.Contracts/FieldService.Contracts.csproj shared/FieldService.Contracts/
+COPY mobile/FieldService.Mobile.Core/FieldService.Mobile.Core.csproj mobile/FieldService.Mobile.Core/
+COPY tests/FieldService.Tests/FieldService.Tests.csproj tests/FieldService.Tests/
+RUN dotnet restore tests/FieldService.Tests
+COPY api api
+COPY shared shared
+COPY mobile/FieldService.Mobile.Core mobile/FieldService.Mobile.Core
+COPY tests tests
+RUN dotnet test tests/FieldService.Tests -c Release --no-restore --logger "console;verbosity=normal"

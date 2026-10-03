@@ -1,0 +1,33 @@
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: fieldservice
+      POSTGRES_USER: fieldservice
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/setup.sh}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fieldservice -d fieldservice"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  api:
+    build:
+      context: .
+      dockerfile: api/FieldService.Api/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ConnectionStrings__Database: Host=database;Database=fieldservice;Username=fieldservice;Password=${POSTGRES_PASSWORD}
+      Jwt__Key: ${JWT_KEY:?Run scripts/setup.sh}
+      Seed__Enabled: "true"
+      Seed__Password: ${DEMO_PASSWORD:?Run scripts/setup.sh}
+      Cors__Origins: http://localhost:4200
+    depends_on:
+      database:
+        condition: service_healthy
+volumes:
+  database:
